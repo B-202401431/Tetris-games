@@ -241,6 +241,6 @@ void draw() {
 
 ## 📚 License
 
-MIT License - See [LICENSE](https://github.com/B202404016/Tetris-game-/blob/main/LICENSE) for full details.
+MIT License - See [LICENSE](https://github.com/B-202401431/Tetris-games/blob/main/LICENSE) for full details.
 
 **Enjoy the game!** 🎮
