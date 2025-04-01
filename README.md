@@ -238,10 +238,9 @@ void draw() {
 4. Push to the branch (`git push origin feature/NewFeature`)
 5. Open a pull request
 
-## 📜 License
 
-MIT License - Free for modification and distribution
+## 📚 License
 
----
+MIT License - See [LICENSE](https://github.com/B202404016/Tetris-game-/blob/main/LICENSE) for full details.
 
 **Enjoy the game!** 🎮
