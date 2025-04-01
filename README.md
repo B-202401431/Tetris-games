@@ -3,7 +3,7 @@
 
 # 🎮 Tetris Console Game - Classic Block Puzzle
 
-![Tetris Gameplay Demo](https://i.imgur.com/JQZ1KlP.png)
+![Tetris Gameplay Demo](https://github.com/B-202401431/Tetris-games/blob/main/R.png)
 
 A faithful recreation of the classic Tetris game built for Windows console using modern C++ with authentic gameplay mechanics and colorful console graphics.
 
