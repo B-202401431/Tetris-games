@@ -9,16 +9,35 @@
 using namespace std;
 
 // Game constants
-const int WIDTH = 10;                // Width of the playfield
-const int HEIGHT = 20;               // Total height of the playfield (including invisible top)
-const int VISIBLE_HEIGHT = 20;       // Visible height of the playfield
-const int INITIAL_SPEEDS[] = {1000, 800, 600, 400}; // Initial speeds for different difficulty levels
-const int LEVEL_UP_LINES = 10;       // Lines needed to level up
-const int SCORE_TABLE[] = {0, 40, 100, 300, 1200}; // Score for 1, 2, 3, 4 lines
+const int WIDTH = 10;
+const int HEIGHT = 20;
+const int VISIBLE_HEIGHT = 20;
+const int INITIAL_SPEEDS[] = {1000, 800, 600, 400};
+const int LEVEL_UP_LINES = 10;
+const int SCORE_TABLE[] = {0, 40, 100, 300, 1200};
 
 HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
-// Color definitions for the pieces
+// Helper functions for cursor control
+void gotoxy(int x, int y) {
+    COORD coord;
+    coord.X = x;
+    coord.Y = y;
+    SetConsoleCursorPosition(hConsole, coord);
+}
+
+void hideCursor() {
+    CONSOLE_CURSOR_INFO cursorInfo;
+    cursorInfo.dwSize = 1;
+    cursorInfo.bVisible = FALSE;
+    SetConsoleCursorInfo(hConsole, &cursorInfo);
+}
+
+void clearScreen() {
+    system("cls");
+}
+
+// Color definitions
 enum Colors {
     BLACK = 0,
     BLUE = 1,
@@ -38,70 +57,66 @@ enum Colors {
     BRIGHT_WHITE = 15
 };
 
-// Helper function to set console colors
 void setColor(int textColor, int bgColor = BLACK) {
     SetConsoleTextAttribute(hConsole, (bgColor << 4) | textColor);
 }
 
-// Simple point structure for coordinates
 struct Point {
     int x, y;
     Point(int x = 0, int y = 0) : x(x), y(y) {}
 };
 
-// Tetromino structure containing shape, color and position
 struct Tetromino {
-    vector<vector<int>> shape;  // 2D array representing the piece shape
-    vector<Point> wallKicks;    // Wall kick tests for rotation
-    int color;                  // Color of the piece
-    int x, y;                   // Position on the board
+    vector<vector<int>> shape;
+    vector<Point> wallKicks;
+    int color;
+    int x, y;
 };
 
-// All Tetromino definitions with their shapes and wall kicks
 vector<Tetromino> tetrominoes = {
-    // I piece (cyan)
+    // I piece
     {
         {{0,0,0,0}, {1,1,1,1}, {0,0,0,0}, {0,0,0,0}},
         {{0,0}, {-2,0}, {1,0}, {-2,-1}, {1,2}},
         CYAN,
         0, 0
     },
-    // O piece (yellow)
+    // O piece
     {
         {{1,1}, {1,1}},
-        {{0,0}}, // O piece doesn't rotate
+        {{0,0}},
         YELLOW,
         0, 0
     },
-    // T piece (magenta)
+    // T piece
     {
         {{0,1,0}, {1,1,1}, {0,0,0}},
         {{0,0}, {-1,0}, {-1,1}, {0,-2}, {-1,-2}},
         MAGENTA,
         0, 0
     },
-    // L piece (bright blue)
+    // L piece
     {
         {{0,0,1}, {1,1,1}, {0,0,0}},
         {{0,0}, {-1,0}, {-1,1}, {0,-2}, {-1,-2}},
         BRIGHT_BLUE,
         0, 0
     },
-    // J piece (blue)
+    // J piece
     {
         {{1,0,0}, {1,1,1}, {0,0,0}},
         {{0,0}, {-1,0}, {-1,1}, {0,-2}, {-1,-2}},
         BLUE,
         0, 0
     },
-    // S piece (green)
+    // S piece
     {
         {{0,1,1}, {1,1,0}, {0,0,0}},
         {{0,0}, {-1,0}, {-1,1}, {0,-2}, {-1,-2}},
         GREEN,
         0, 0
     },
-    // Z piece (red)
+    // Z piece
     {
         {{1,1,0}, {0,1,1}, {0,0,0}},
         {{0,0}, {-1,0}, {-1,1}, {0,-2}, {-1,-2}},
@@ -112,27 +127,139 @@ vector<Tetromino> tetrominoes = {
 
 class Game {
 private:
-    int board[HEIGHT][WIDTH] = {0};  // Game board (0 = empty, other values = colors)
-    Tetromino current, next, hold;   // Current, next and held pieces
-    bool canHold = true;             // Flag to prevent holding twice in a row
-    int score = 0;                   // Current score
-    int level = 1;                   // Current level
-    int linesCleared = 0;            // Total lines cleared
-    int speed;                       // Current fall speed
-    bool gameOver = false;           // Game over flag
-    clock_t lastFall = 0;            // Time of last fall
-    bool needsRedraw = true;         // Flag to optimize drawing
-    int difficulty = 1;              // Difficulty level (1-4)
+    int board[HEIGHT][WIDTH] = {0};
+    Tetromino current, next, hold;
+    bool canHold = true;
+    int score = 0;
+    int level = 1;
+    int linesCleared = 0;
+    int speed;
+    bool gameOver = false;
+    clock_t lastFall = 0;
+    bool needsRedraw = true;
+    int difficulty = 1;
+    vector<pair<int, int>> changedCells;
+    vector<pair<int, int>> previousPiecePositions;
+    clock_t lastCheatTime = 0;
+    const int CHEAT_COOLDOWN = 5000; // 5 seconds
+
+    void drawCell(int x, int y, int color) {
+        gotoxy((x + 1) * 2, y + 2);
+        setColor(BLACK, color);
+        cout << "  ";
+    }
+
+    void clearPreviousPiece() {
+        for (auto& pos : previousPiecePositions) {
+            int x = pos.first;
+            int y = pos.second;
+            if (y >= 0 && y < VISIBLE_HEIGHT && x >= 0 && x < WIDTH) {
+                if (board[y][x] == 0) {
+                    drawCell(x, y, BLACK);
+                }
+            }
+        }
+        previousPiecePositions.clear();
+    }
+
+    void storeCurrentPiecePositions() {
+        for (int i = 0; i < current.shape.size(); i++) {
+            for (int j = 0; j < current.shape[i].size(); j++) {
+                if (current.shape[i][j]) {
+                    int y = current.y + i;
+                    int x = current.x + j;
+                    previousPiecePositions.emplace_back(x, y);
+                }
+            }
+        }
+    }
+
+    void clearHoldArea() {
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                gotoxy((WIDTH + 3 + j) * 2, 3 + i);
+                setColor(BLACK, BLACK);
+                cout << "  ";
+            }
+        }
+    }
+
+    void clearNextArea() {
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                gotoxy((WIDTH + 3 + j) * 2, 10 + i);
+                setColor(BLACK, BLACK);
+                cout << "  ";
+            }
+        }
+    }
+
+    void clearBoard() {
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                board[y][x] = 0;
+                drawCell(x, y, BLACK);
+            }
+        }
+        needsRedraw = true;
+    }
+
+    void showCheatMessage(const string& message) {
+        gotoxy(0, VISIBLE_HEIGHT + 3);
+        setColor(BRIGHT_YELLOW, BLACK);
+        cout << "CHEAT: " << message << string(20, ' '); // Clear any previous message
+        Sleep(1000);
+        gotoxy(0, VISIBLE_HEIGHT + 3);
+        cout << string(30, ' '); // Clear the message line
+    }
 
 public:
     Game(int diff) : difficulty(diff) {
-        speed = INITIAL_SPEEDS[difficulty-1]; // Set initial speed based on difficulty
-        srand(time(0));  // Seed random number generator
-        next = getRandomTetromino(); // Get first next piece
-        spawnNewPiece(); // Spawn first piece
+        speed = INITIAL_SPEEDS[difficulty-1];
+        srand(time(0));
+        next = getRandomTetromino();
+        spawnNewPiece();
+        initializeDisplay();
     }
 
-    // Returns a random tetromino
+    void initializeDisplay() {
+        clearScreen();
+        setColor(WHITE);
+        gotoxy(0, 0);
+        cout << "Score: " << score << "  Level: " << level << "  Lines: " << linesCleared;
+        
+        // Draw borders
+        for (int y = 0; y < VISIBLE_HEIGHT + 2; y++) {
+            gotoxy(0, y + 1);
+            setColor(WHITE, WHITE);
+            cout << "  ";
+            
+            gotoxy((WIDTH + 1) * 2, y + 1);
+            setColor(WHITE, WHITE);
+            cout << "  ";
+        }
+        
+        gotoxy(0, VISIBLE_HEIGHT + 2);
+        for (int j = 0; j < WIDTH + 2; j++) {
+            setColor(WHITE, WHITE);
+            cout << "  ";
+        }
+        
+        // Draw empty board
+        for (int y = 0; y < VISIBLE_HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                drawCell(x, y, BLACK);
+            }
+        }
+        
+        // Draw next/hold labels
+        gotoxy((WIDTH + 3) * 2, 1);
+        setColor(WHITE);
+        cout << "Hold:";
+        gotoxy((WIDTH + 3) * 2, 8);
+        cout << "Next:";
+    }
+
     Tetromino getRandomTetromino() {
         Tetromino t = tetrominoes[rand() % tetrominoes.size()];
         t.x = 0;
@@ -140,22 +267,19 @@ public:
         return t;
     }
 
-    // Spawns a new piece at the top of the board
     void spawnNewPiece() {
         current = next;
         next = getRandomTetromino();
-        current.x = WIDTH / 2 - current.shape[0].size() / 2; // Center the piece
+        current.x = WIDTH / 2 - current.shape[0].size() / 2;
         current.y = 0;
         canHold = true;
         needsRedraw = true;
         
-        // Check if game over (new piece can't be placed)
         if (!isValidPosition(current.shape, current.x, current.y)) {
             gameOver = true;
         }
     }
 
-    // Checks if a piece can be placed at a certain position
     bool isValidPosition(const vector<vector<int>>& shape, int x, int y) {
         for (int i = 0; i < shape.size(); i++) {
             for (int j = 0; j < shape[i].size(); j++) {
@@ -171,9 +295,8 @@ public:
         return true;
     }
 
-    // Rotates the current piece with wall kicks
     void rotatePiece() {
-        if (current.shape.size() == 4) { // I piece special case
+        if (current.shape.size() == 4) {
             vector<vector<int>> rotated(4, vector<int>(4, 0));
             for (int i = 0; i < 4; i++) {
                 for (int j = 0; j < 4; j++) {
@@ -181,7 +304,6 @@ public:
                 }
             }
             
-            // Try wall kicks
             for (const auto& kick : current.wallKicks) {
                 if (isValidPosition(rotated, current.x + kick.x, current.y + kick.y)) {
                     current.shape = rotated;
@@ -191,7 +313,7 @@ public:
                     return;
                 }
             }
-        } else if (current.shape.size() > 1) { // Other pieces
+        } else if (current.shape.size() > 1) {
             vector<vector<int>> rotated(current.shape[0].size(), vector<int>(current.shape.size(), 0));
             for (int i = 0; i < current.shape.size(); i++) {
                 for (int j = 0; j < current.shape[i].size(); j++) {
@@ -199,7 +321,6 @@ public:
                 }
             }
             
-            // Try wall kicks
             for (const auto& kick : current.wallKicks) {
                 if (isValidPosition(rotated, current.x + kick.x, current.y + kick.y)) {
                     current.shape = rotated;
@@ -212,7 +333,6 @@ public:
         }
     }
 
-    // Moves the current piece by dx, dy if possible
     void movePiece(int dx, int dy) {
         if (isValidPosition(current.shape, current.x + dx, current.y + dy)) {
             current.x += dx;
@@ -221,7 +341,6 @@ public:
         }
     }
 
-    // Drops the piece immediately to the bottom
     void hardDrop() {
         while (isValidPosition(current.shape, current.x, current.y + 1)) {
             current.y++;
@@ -229,22 +348,22 @@ public:
         lockPiece();
     }
 
-    // Locks the current piece in place and checks for completed lines
     void lockPiece() {
-        // Add piece to board
+        changedCells.clear();
+        
         for (int i = 0; i < current.shape.size(); i++) {
             for (int j = 0; j < current.shape[i].size(); j++) {
                 if (current.shape[i][j]) {
                     int y = current.y + i;
                     int x = current.x + j;
-                    if (y >= 0) { // Only lock if it's in the visible area
+                    if (y >= 0) {
                         board[y][x] = current.color;
+                        changedCells.emplace_back(x, y);
                     }
                 }
             }
         }
         
-        // Check for completed lines
         int lines = 0;
         for (int i = HEIGHT - 1; i >= 0; i--) {
             bool complete = true;
@@ -256,36 +375,42 @@ public:
             }
             
             if (complete) {
-                // Remove the line
                 for (int k = i; k > 0; k--) {
                     for (int j = 0; j < WIDTH; j++) {
-                        board[k][j] = board[k-1][j];
+                        if (board[k][j] != board[k-1][j]) {
+                            board[k][j] = board[k-1][j];
+                            changedCells.emplace_back(j, k);
+                        }
                     }
                 }
-                // Clear top line
                 for (int j = 0; j < WIDTH; j++) {
                     board[0][j] = 0;
+                    changedCells.emplace_back(j, 0);
                 }
                 lines++;
-                i++; // Check the same line again (now with new content)
+                i++;
             }
         }
         
-        // Update score and level
         if (lines > 0) {
             score += SCORE_TABLE[lines] * level;
             linesCleared += lines;
             level = linesCleared / LEVEL_UP_LINES + 1;
             speed = max(100, INITIAL_SPEEDS[difficulty-1] - (level * 50));
-            needsRedraw = true;
+            
+            gotoxy(0, 0);
+            setColor(WHITE);
+            cout << "Score: " << score << "  Level: " << level << "  Lines: " << linesCleared;
+            cout << string(10, ' ');
         }
         
         spawnNewPiece();
     }
 
-    // Holds the current piece and swaps with the held piece
     void holdPiece() {
         if (!canHold) return;
+        
+        clearHoldArea();
         
         if (hold.shape.empty()) {
             hold = current;
@@ -296,108 +421,71 @@ public:
             current.x = WIDTH / 2 - current.shape[0].size() / 2;
             current.y = 0;
             hold = temp;
+            
+            clearHoldArea();
         }
         canHold = false;
         needsRedraw = true;
     }
 
-    // Draws the game screen
     void draw() {
         if (!needsRedraw) return;
         
-        system("cls");
+        clearPreviousPiece();
+        storeCurrentPiecePositions();
         
-        // Draw score and level info
-        setColor(WHITE);
-        cout << "Score: " << score << "  Level: " << level << "  Lines: " << linesCleared << endl << endl;
-        
-        // Draw playfield
-        for (int i = 0; i < VISIBLE_HEIGHT; i++) {
-            // Left border
-            setColor(WHITE, WHITE);
-            cout << "  ";
-            
-            // Playfield
-            for (int j = 0; j < WIDTH; j++) {
-                if (board[i][j]) {
-                    setColor(BLACK, board[i][j]);
-                    cout << "  ";
-                } else {
-                    setColor(BLACK, BLACK);
-                    cout << "  ";
-                }
-            }
-            
-            // Right border and hold/next area
-            setColor(WHITE, WHITE);
-            cout << "  ";
-            
-            // Right side info
-            setColor(WHITE);
-            if (i == 1) cout << "  Hold:";
-            if (i == 4 && !hold.shape.empty()) {
-                for (int j = 0; j < hold.shape[0].size(); j++) {
-                    setColor(BLACK, hold.color);
-                    cout << "  ";
-                }
-            }
-            
-            if (i == 8) cout << "  Next:";
-            if (i == 11) {
-                for (int j = 0; j < next.shape[0].size(); j++) {
-                    setColor(BLACK, next.color);
-                    cout << "  ";
-                }
-            }
-            
-            cout << endl;
+        for (auto& cell : changedCells) {
+            int x = cell.first;
+            int y = cell.second;
+            drawCell(x, y, board[y][x]);
         }
+        changedCells.clear();
         
-        // Bottom border
-        setColor(WHITE, WHITE);
-        for (int j = 0; j < WIDTH + 2; j++) {
-            cout << "  ";
-        }
-        cout << endl;
-        
-        // Draw current piece
         for (int i = 0; i < current.shape.size(); i++) {
             for (int j = 0; j < current.shape[i].size(); j++) {
                 if (current.shape[i][j]) {
                     int y = current.y + i;
                     int x = current.x + j;
                     if (y >= 0 && y < VISIBLE_HEIGHT) {
-                        COORD pos = {static_cast<SHORT>((x + 1) * 2), static_cast<SHORT>(y + 3)};
-                        SetConsoleCursorPosition(hConsole, pos);
-                        setColor(BLACK, current.color);
+                        drawCell(x, y, current.color);
+                    }
+                }
+            }
+        }
+        
+        clearNextArea();
+        for (int i = 0; i < next.shape.size(); i++) {
+            for (int j = 0; j < next.shape[i].size(); j++) {
+                gotoxy((WIDTH + 3 + j) * 2, 10 + i);
+                if (next.shape[i][j]) {
+                    setColor(BLACK, next.color);
+                    cout << "  ";
+                } else {
+                    setColor(BLACK, BLACK);
+                    cout << "  ";
+                }
+            }
+        }
+        
+        clearHoldArea();
+        if (!hold.shape.empty()) {
+            for (int i = 0; i < hold.shape.size(); i++) {
+                for (int j = 0; j < hold.shape[i].size(); j++) {
+                    gotoxy((WIDTH + 3 + j) * 2, 3 + i);
+                    if (hold.shape[i][j]) {
+                        setColor(BLACK, hold.color);
+                        cout << "  ";
+                    } else {
+                        setColor(BLACK, BLACK);
                         cout << "  ";
                     }
                 }
             }
         }
         
-        // Reset cursor and color
-        COORD pos = {0, static_cast<SHORT>(VISIBLE_HEIGHT + 5)};
-        SetConsoleCursorPosition(hConsole, pos);
-        setColor(WHITE);
-        
-        if (gameOver) {
-            cout << "GAME OVER! Final Score: " << score << endl;
-            cout << "Press ESC to exit" << endl;
-        } else {
-            cout << "Controls:" << endl;
-            cout << "Left/Right Arrow: Move" << endl;
-            cout << "Up Arrow: Rotate" << endl;
-            cout << "Down Arrow: Soft Drop" << endl;
-            cout << "Space: Hard Drop" << endl;
-            cout << "C: Hold" << endl;
-            cout << "ESC: Quit" << endl;
-        }
-        
         needsRedraw = false;
     }
 
-    // Updates game state (piece falling)
     void update() {
         if (gameOver) return;
         
@@ -413,10 +501,26 @@ public:
         }
     }
 
-    // Handles keyboard input
     void handleInput() {
+        static string cheatBuffer;
+        
         if (_kbhit()) {
             int key = _getch();
+            
+            // Cheat code detection
+            cheatBuffer += toupper(key);
+            if (cheatBuffer.size() > 10) {
+                cheatBuffer.clear();
+            }
+            
+            if (cheatBuffer.find("CLEAR") != string::npos && 
+                clock() - lastCheatTime > CHEAT_COOLDOWN) {
+                clearBoard();
+                showCheatMessage("BOARD CLEARED!");
+                lastCheatTime = clock();
+                cheatBuffer.clear();
+                return;
+            }
             
             if (gameOver) {
                 if (key == 27) exit(0);
@@ -424,51 +528,51 @@ public:
             }
             
             switch (key) {
-                case 75: movePiece(-1, 0); break; // Left arrow
-                case 77: movePiece(1, 0); break;  // Right arrow
-                case 80: movePiece(0, 1); break;  // Down arrow (soft drop)
-                case 72: rotatePiece(); break;    // Up arrow (rotate)
-                case 32: hardDrop(); break;       // Space (hard drop)
+                case 75: movePiece(-1, 0); break;
+                case 77: movePiece(1, 0); break;
+                case 80: movePiece(0, 1); break;
+                case 72: rotatePiece(); break;
+                case 32: hardDrop(); break;
                 case 'c':
-                case 'C': holdPiece(); break;     // C key (hold)
-                case 27: exit(0);                // ESC (quit)
+                case 'C': holdPiece(); break;
+                case 27: exit(0);
             }
         }
     }
 
-    // Returns game over state
     bool isGameOver() const {
         return gameOver;
     }
+
+    int getScore() const {
+        return score;
+    }
 };
 
-// Function to display welcome screen
 void showWelcomeScreen() {
-    system("cls");
+    clearScreen();
     setColor(WHITE);
     
     cout << R"(
-  _______ _______ _______ _______ 
- |__   _|_   _|_   _|_   __|
-    | |     | |     | |     | |   
-    | |     | |     | |     | |   
-    | |     | |     | |     | |   
-    ||     ||     ||     ||   
-)" << endl;
-
+        _____ _____ _____ _____ _____ _____ 
+       |_   _|_   _|_   _|_   _|_   _|_   _|
+         | |   | |   | |   | |   | |   | |  
+         | |   | |   | |   | |   | |   | |  
+         |_|   |_|   |_|   |_|   |_|   |_|  
+       )" << endl;
     cout << "\nWelcome to TETRIS GAME!\n\n";
     cout << "Instructions:\n";
     cout << "- Use arrow keys to move and rotate pieces\n";
     cout << "- Complete lines to score points\n";
-    cout << "- The game gets faster as you level up\n\n";
+    cout << "- The game gets faster as you level up\n";
+    cout << "- Cheat code: Type 'CLEAR' to clear the board\n\n";
     cout << "Press any key to continue...";
     
     _getch();
 }
 
-// Function to select difficulty level
 int selectDifficulty() {
-    system("cls");
+    clearScreen();
     setColor(WHITE);
     
     cout << "Select Difficulty Level:\n\n";
@@ -489,28 +593,30 @@ int selectDifficulty() {
 }
 
 int main() {
-    // Set up console window
     system("mode con: cols=40 lines=30");
     SetConsoleTitle("Tetris");
+    hideCursor();
     
-    // Show welcome screen
     showWelcomeScreen();
-    
-    // Select difficulty
     int difficulty = selectDifficulty();
     
-    // Create and run game
+    clearScreen();
+    
     Game game(difficulty);
     
-    // Main game loop
     while (!game.isGameOver()) {
         game.handleInput();
         game.update();
         game.draw();
-        Sleep(16); // ~60 FPS
+        Sleep(16);
     }
     
-    // Game over loop (wait for ESC)
+    clearScreen();
+    gotoxy(0, 0);
+    setColor(WHITE);
+    cout << "GAME OVER! Final Score: " << game.getScore() << endl;
+    cout << "Press ESC to exit" << endl;
+    
     while (true) {
         if (_kbhit() && _getch() == 27) {
             break;
